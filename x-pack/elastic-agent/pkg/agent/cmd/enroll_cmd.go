@@ -11,15 +11,12 @@ import (
 	"io"
 	"io/ioutil"
 	"math/rand"
-	"net/http"
-	"net/url"
 	"os"
 	"os/exec"
 	"time"
 
 	"gopkg.in/yaml.v2"
 
-	"github.com/elastic/beats/v7/libbeat/common"
 	"github.com/elastic/beats/v7/libbeat/common/backoff"
 
 	"github.com/elastic/beats/v7/libbeat/common/transport/httpcommon"
@@ -76,17 +73,19 @@ type enrollCmd struct {
 
 // enrollCmdFleetServerOption define all the supported enrollment options for bootstrapping with Fleet Server.
 type enrollCmdFleetServerOption struct {
-	ConnStr         string
-	ElasticsearchCA string
-	ServiceToken    string
-	PolicyID        string
-	Host            string
-	Port            uint16
-	Cert            string
-	CertKey         string
-	Insecure        bool
-	SpawnAgent      bool
-	Headers         map[string]string
+	ConnStr               string
+	ElasticsearchCA       string
+	ElasticsearchInsecure bool
+	ServiceToken          string
+	PolicyID              string
+	Host                  string
+	Port                  uint16
+	Cert                  string
+	CertKey               string
+	Insecure              bool
+	SpawnAgent            bool
+	Headers               map[string]string
+	Timeout               time.Duration
 }
 
 // enrollCmdOption define all the supported enrollment option.
@@ -100,6 +99,7 @@ type enrollCmdOption struct {
 	ProxyURL             string                     `yaml:"proxy_url,omitempty"`
 	ProxyDisabled        bool                       `yaml:"proxy_disabled,omitempty"`
 	ProxyHeaders         map[string]string          `yaml:"proxy_headers,omitempty"`
+	DaemonTimeout        time.Duration              `yaml:"daemon_timeout,omitempty"`
 	UserProvidedMetadata map[string]interface{}     `yaml:"-"`
 	FixPermissions       bool                       `yaml:"-"`
 	DelayEnroll          bool                       `yaml:"-"`
@@ -128,27 +128,12 @@ func (e *enrollCmdOption) remoteConfig() (remote.Config, error) {
 
 	cfg.Transport.TLS = &tlsCfg
 
-	var proxyURL *url.URL
-	if e.ProxyURL != "" {
-		proxyURL, err = common.ParseURL(e.ProxyURL)
-		if err != nil {
-			return remote.Config{}, err
-		}
+	proxySettings, err := httpcommon.NewHTTPClientProxySettings(e.ProxyURL, e.ProxyHeaders, e.ProxyDisabled)
+	if err != nil {
+		return remote.Config{}, err
 	}
 
-	var headers http.Header
-	if len(e.ProxyHeaders) > 0 {
-		headers = http.Header{}
-		for k, v := range e.ProxyHeaders {
-			headers.Add(k, v)
-		}
-	}
-
-	cfg.Transport.Proxy = httpcommon.HTTPClientProxySettings{
-		URL:     proxyURL,
-		Disable: e.ProxyDisabled,
-		Headers: headers,
-	}
+	cfg.Transport.Proxy = *proxySettings
 
 	return cfg, nil
 }
@@ -205,7 +190,7 @@ func (c *enrollCmd) Execute(ctx context.Context, streams *cli.IOStreams) error {
 	// Connection setup should disable proxies in that case.
 	localFleetServer := c.options.FleetServer.ConnStr != ""
 	if localFleetServer && !c.options.DelayEnroll {
-		token, err := c.fleetServerBootstrap(ctx)
+		token, err := c.fleetServerBootstrap(ctx, persistentConfig)
 		if err != nil {
 			return err
 		}
@@ -292,14 +277,14 @@ func (c *enrollCmd) writeDelayEnroll(streams *cli.IOStreams) error {
 	return nil
 }
 
-func (c *enrollCmd) fleetServerBootstrap(ctx context.Context) (string, error) {
+func (c *enrollCmd) fleetServerBootstrap(ctx context.Context, persistentConfig map[string]interface{}) (string, error) {
 	c.log.Debug("verifying communication with running Elastic Agent daemon")
 	agentRunning := true
 	_, err := getDaemonStatus(ctx)
 	if err != nil {
 		if !c.options.FleetServer.SpawnAgent {
 			// wait longer to try and communicate with the Elastic Agent
-			err = waitForAgent(ctx)
+			err = waitForAgent(ctx, c.options.DaemonTimeout)
 			if err != nil {
 				return "", errors.New("failed to communicate with elastic-agent daemon; is elastic-agent running?")
 			}
@@ -313,6 +298,11 @@ func (c *enrollCmd) fleetServerBootstrap(ctx context.Context) (string, error) {
 		return "", err
 	}
 
+	agentConfig, err := c.createAgentConfig("", persistentConfig, c.options.FleetServer.Headers)
+	if err != nil {
+		return "", err
+	}
+
 	fleetConfig, err := createFleetServerBootstrapConfig(
 		c.options.FleetServer.ConnStr, c.options.FleetServer.ServiceToken,
 		c.options.FleetServer.PolicyID,
@@ -322,12 +312,14 @@ func (c *enrollCmd) fleetServerBootstrap(ctx context.Context) (string, error) {
 		c.options.ProxyURL,
 		c.options.ProxyDisabled,
 		c.options.ProxyHeaders,
+		c.options.FleetServer.ElasticsearchInsecure,
 	)
 	if err != nil {
 		return "", err
 	}
 
 	configToStore := map[string]interface{}{
+		"agent": agentConfig,
 		"fleet": fleetConfig,
 	}
 	reader, err := yamlToReader(configToStore)
@@ -354,9 +346,9 @@ func (c *enrollCmd) fleetServerBootstrap(ctx context.Context) (string, error) {
 		}
 	}
 
-	token, err := waitForFleetServer(ctx, agentSubproc, c.log)
+	token, err := waitForFleetServer(ctx, agentSubproc, c.log, c.options.FleetServer.Timeout)
 	if err != nil {
-		return "", errors.New(err, "fleet-server never started by elastic-agent daemon", errors.TypeApplication)
+		return "", errors.New(err, "fleet-server failed", errors.TypeApplication)
 	}
 	return token, nil
 }
@@ -515,7 +507,9 @@ func (c *enrollCmd) enroll(ctx context.Context, persistentConfig map[string]inte
 			c.options.FleetServer.Host, c.options.FleetServer.Port,
 			c.options.FleetServer.Cert, c.options.FleetServer.CertKey, c.options.FleetServer.ElasticsearchCA,
 			c.options.FleetServer.Headers,
-			c.options.ProxyURL, c.options.ProxyDisabled, c.options.ProxyHeaders)
+			c.options.ProxyURL, c.options.ProxyDisabled, c.options.ProxyHeaders,
+			c.options.FleetServer.ElasticsearchInsecure,
+		)
 		if err != nil {
 			return err
 		}
@@ -563,6 +557,12 @@ func (c *enrollCmd) startAgent(ctx context.Context) (<-chan *os.ProcessState, er
 		"run", "-e", "-c", paths.ConfigFile(),
 		"--path.home", paths.Top(), "--path.config", paths.Config(),
 		"--path.logs", paths.Logs(),
+	}
+	if paths.Downloads() != "" {
+		args = append(args, "--path.downloads", paths.Downloads())
+	}
+	if paths.Install() != "" {
+		args = append(args, "--path.install", paths.Install())
 	}
 	if !paths.IsVersionHome() {
 		args = append(args, "--path.home.unversioned")
@@ -625,16 +625,28 @@ type waitResult struct {
 	err             error
 }
 
-func waitForAgent(ctx context.Context) error {
-	ctx, cancel := context.WithTimeout(ctx, 1*time.Minute)
-	defer cancel()
+func waitForAgent(ctx context.Context, timeout time.Duration) error {
+	if timeout == 0 {
+		timeout = 1 * time.Minute
+	}
+	if timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
+	}
+	maxBackoff := timeout
+	if maxBackoff <= 0 {
+		// indefinite timeout
+		maxBackoff = 10 * time.Minute
+	}
 
 	resChan := make(chan waitResult)
 	innerCtx, innerCancel := context.WithCancel(context.Background())
 	defer innerCancel()
 	go func() {
+		backOff := expBackoffWithContext(innerCtx, 1*time.Second, maxBackoff)
 		for {
-			<-time.After(1 * time.Second)
+			backOff.Wait()
 			_, err := getDaemonStatus(innerCtx)
 			if err == context.Canceled {
 				resChan <- waitResult{err: err}
@@ -661,9 +673,20 @@ func waitForAgent(ctx context.Context) error {
 	return nil
 }
 
-func waitForFleetServer(ctx context.Context, agentSubproc <-chan *os.ProcessState, log *logger.Logger) (string, error) {
-	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
-	defer cancel()
+func waitForFleetServer(ctx context.Context, agentSubproc <-chan *os.ProcessState, log *logger.Logger, timeout time.Duration) (string, error) {
+	if timeout == 0 {
+		timeout = 2 * time.Minute
+	}
+	if timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
+	}
+	maxBackoff := timeout
+	if maxBackoff <= 0 {
+		// indefinite timeout
+		maxBackoff = 10 * time.Minute
+	}
 
 	resChan := make(chan waitResult)
 	innerCtx, innerCancel := context.WithCancel(context.Background())
@@ -671,8 +694,9 @@ func waitForFleetServer(ctx context.Context, agentSubproc <-chan *os.ProcessStat
 	go func() {
 		msg := ""
 		msgCount := 0
+		backExp := expBackoffWithContext(innerCtx, 1*time.Second, maxBackoff)
 		for {
-			<-time.After(1 * time.Second)
+			backExp.Wait()
 			status, err := getDaemonStatus(innerCtx)
 			if err == context.Canceled {
 				resChan <- waitResult{err: err}
@@ -818,16 +842,21 @@ func createFleetServerBootstrapConfig(
 	proxyURL string,
 	proxyDisabled bool,
 	proxyHeaders map[string]string,
+	insecure bool,
 ) (*configuration.FleetAgentConfig, error) {
 	localFleetServer := connStr != ""
 
-	es, err := configuration.ElasticsearchFromConnStr(connStr, serviceToken)
+	es, err := configuration.ElasticsearchFromConnStr(connStr, serviceToken, insecure)
 	if err != nil {
 		return nil, err
 	}
 	if esCA != "" {
-		es.TLS = &tlscommon.Config{
-			CAs: []string{esCA},
+		if es.TLS == nil {
+			es.TLS = &tlscommon.Config{
+				CAs: []string{esCA},
+			}
+		} else {
+			es.TLS.CAs = []string{esCA}
 		}
 	}
 	if host == "" {
@@ -846,7 +875,7 @@ func createFleetServerBootstrapConfig(
 		}
 	}
 	es.ProxyURL = proxyURL
-	es.ProxyDisabled = proxyDisabled
+	es.ProxyDisable = proxyDisabled
 	es.ProxyHeaders = proxyHeaders
 
 	cfg := configuration.DefaultFleetAgentConfig()
@@ -868,6 +897,9 @@ func createFleetServerBootstrapConfig(
 				Certificate: cert,
 				Key:         key,
 			},
+		}
+		if insecure {
+			cfg.Server.TLS.VerificationMode = tlscommon.VerifyNone
 		}
 	}
 
@@ -949,4 +981,14 @@ func getPersistentConfig(pathConfigFile string) (map[string]interface{}, error) 
 	}
 
 	return persistentMap, nil
+}
+
+func expBackoffWithContext(ctx context.Context, init, max time.Duration) backoff.Backoff {
+	signal := make(chan struct{})
+	bo := backoff.NewExpBackoff(signal, init, max)
+	go func() {
+		<-ctx.Done()
+		close(signal)
+	}()
+	return bo
 }

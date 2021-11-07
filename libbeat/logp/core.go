@@ -196,10 +196,9 @@ func makeOptions(cfg Config) []zap.Option {
 	if cfg.development {
 		options = append(options, zap.Development())
 	}
-	if cfg.ECSEnabled {
+	if cfg.Beat != "" {
 		fields := []zap.Field{
 			zap.String("service.name", cfg.Beat),
-			zap.String("event.dataset", cfg.LogFilename()),
 		}
 		options = append(options, zap.Fields(fields...))
 	}
@@ -255,10 +254,7 @@ func newCore(cfg Config, enc zapcore.Encoder, ws zapcore.WriteSyncer, enab zapco
 	return wrappedCore(cfg, zapcore.NewCore(enc, ws, enab))
 }
 func wrappedCore(cfg Config, core zapcore.Core) zapcore.Core {
-	if cfg.ECSEnabled {
-		return ecszap.WrapCore(core)
-	}
-	return core
+	return ecszap.WrapCore(core)
 }
 
 func globalLogger() *zap.Logger {

@@ -26,11 +26,9 @@ import (
 // Config contains the configuration options for the logger. To create a Config
 // from a common.Config use logp/config.Build.
 type Config struct {
-	Beat       string   `config:",ignore"`        // Name of the Beat (for default file name).
-	JSON       bool     `config:"json"`           // Write logs as JSON.
-	Level      Level    `config:"level"`          // Logging level (error, warning, info, debug).
-	Selectors  []string `config:"selectors"`      // Selectors for debug level logging.
-	ECSEnabled bool     `config:"ecs" yaml:"ecs"` // Adds minimal ECS information using ECS conformant keys to every log line
+	Beat      string   `config:",ignore"`   // Name of the Beat (for default file name).
+	Level     Level    `config:"level"`     // Logging level (error, warning, info, debug).
+	Selectors []string `config:"selectors"` // Selectors for debug level logging.
 
 	toObserver  bool
 	toIODiscard bool
@@ -39,7 +37,8 @@ type Config struct {
 	ToFiles     bool `config:"to_files" yaml:"to_files"`
 	ToEventLog  bool `config:"to_eventlog" yaml:"to_eventlog"`
 
-	Files FileConfig `config:"files"`
+	Files   FileConfig    `config:"files"`
+	Metrics MetricsConfig `config:"metrics"`
 
 	environment Environment
 	addCaller   bool // Adds package and line number info to messages.
@@ -59,6 +58,14 @@ type FileConfig struct {
 	RedirectStderr  bool            `config:"redirect_stderr" yaml:"redirect_stderr"`
 }
 
+// MetricsConfig contains configuration used by the monitor to output metrics into the logstream.
+//
+// Currently these options are not used through this object in beats (as monitoring is setup elsewhere).
+type MetricsConfig struct {
+	Enabled bool          `config:"enabled"`
+	Period  time.Duration `config:"period"`
+}
+
 const (
 	defaultLevel = InfoLevel
 )
@@ -75,6 +82,10 @@ func DefaultConfig(environment Environment) Config {
 			Permissions:     0600,
 			Interval:        0,
 			RotateOnStartup: true,
+		},
+		Metrics: MetricsConfig{
+			Enabled: true,
+			Period:  30 * time.Second,
 		},
 		environment: environment,
 		addCaller:   true,
