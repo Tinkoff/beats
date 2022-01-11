@@ -86,3 +86,7 @@ func (b *Batch) doSignal(sig BatchSignal) {
 		b.OnSignal(sig)
 	}
 }
+
+func (b *Batch) SetEvents(events []publisher.Event) {
+	b.events = events
+}
