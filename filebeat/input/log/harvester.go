@@ -466,7 +466,7 @@ func (h *Harvester) onMessage(
 		}
 		fields["message"] = text
 	}
-
+	meta["message_len"] = message.Bytes
 	err := forwarder.Send(beat.Event{
 		Timestamp: timestamp,
 		Fields:    fields,
