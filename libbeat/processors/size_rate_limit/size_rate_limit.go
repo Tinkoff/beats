@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package sizelimit
+package sizeratelimit
 
 import (
 	"fmt"
@@ -38,7 +38,7 @@ import (
 // instanceID is used to assign each instance a unique monitoring namespace.
 var instanceID = atomic.MakeUint32(0)
 
-const processorName = "size_limit"
+const processorName = "size_rate_limit"
 const logName = "processor." + processorName
 
 func init() {
@@ -99,12 +99,12 @@ func (p *sizeLimit) Run(event *beat.Event) (*beat.Event, error) {
 	if err != nil {
 		return nil, errors.Wrap(err, "could not make key")
 	}
-
+	p.clearOldKeys()
 	if p.checkLimit(key, event) {
 		return event, nil
 	}
 
-	p.logger.Debugf("event [%v] dropped by size_limit processor", event)
+	p.logger.Debugf("event [%v] dropped by size_rate_limit processor", event)
 	p.metrics.Dropped.Inc()
 	return nil, nil
 }
@@ -144,8 +144,21 @@ func (p *sizeLimit) checkLimit(key uint64, event *beat.Event) bool {
 	if !ok {
 		p.keys[key] = bucket{0, time.Now()}
 	}
-	secsSinseLast := p.clock.Now().Sub(p.keys[key].LastReplenish).Seconds()
-	p.keys[key] = bucket{event.Meta["message_len"].(uint64), p.keys[key].LastReplenish}
-	currentRate := float64(p.keys[key].Bytes) / secsSinseLast
-	return currentRate > p.config.Limit.value
+	messageLen, ok := event.Meta["message_len"]
+	if !ok {
+		return true
+	}
+	secsSinceLast := p.clock.Now().Sub(p.keys[key].LastReplenish).Seconds()
+	p.keys[key] = bucket{p.keys[key].Bytes + messageLen.(uint64), p.keys[key].LastReplenish}
+	currentRate := float64(p.keys[key].Bytes) / secsSinceLast
+	return currentRate > p.config.Limit.valuePerSecond()
+}
+
+func (p *sizeLimit) clearOldKeys() {
+	for key := range p.keys {
+		secsSinceLast := p.clock.Now().Sub(p.keys[key].LastReplenish).Seconds()
+		if secsSinceLast > 10 {
+			delete(p.keys, key)
+		}
+	}
 }

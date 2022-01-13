@@ -1,12 +1,12 @@
-[[rate-limit]]
+[[size_rate_limit]]
 === Rate limit the flow of events
 beta[]
 
 ++++
-<titleabbrev>rate_limit</titleabbrev>
+<titleabbrev>size_rate_limit</titleabbrev>
 ++++
 
-The `size_limit` processor limits the throughput of events based on
+The `size_rate_limit` processor limits the throughput of events based on
 bytes count per time.
 
 In the current implementation, size-limited events are dropped. Future
@@ -15,14 +15,14 @@ implementations may allow rate-limited events to be handled differently.
 [source,yaml]
 -----------------------------------------------------
 processors:
-- size_limit:
+- size_rate_limit:
    limit: "10000/m"
 -----------------------------------------------------
 
 [source,yaml]
 -----------------------------------------------------
 processors:
-- size_limit:
+- size_rate_limit:
    fields:
    - "cloudfoundry.org.name"
    limit: "400/s"
@@ -33,7 +33,7 @@ processors:
 processors:
 - if.equals.cloudfoundry.org.name: "acme"
   then:
-  - size_limit:
+  - size_rate_limit:
       limit: "500/s"
 -----------------------------------------------------
 
