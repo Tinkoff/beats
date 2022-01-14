@@ -54,7 +54,7 @@ type metrics struct {
 	Dropped *monitoring.Int
 }
 
-type sizeLimit struct {
+type sizeRateLimit struct {
 	config  config
 	logger  *logp.Logger
 	metrics metrics
@@ -69,10 +69,6 @@ func new(cfg *common.Config) (processors.Processor, error) {
 		return nil, errors.Wrap(err, "could not unpack processor configuration")
 	}
 
-	if err := config.setDefaults(); err != nil {
-		return nil, errors.Wrap(err, "could not set default configuration")
-	}
-
 	// Logging and metrics (each processor instance has a unique ID).
 	var (
 		id  = int(instanceID.Inc())
@@ -80,7 +76,9 @@ func new(cfg *common.Config) (processors.Processor, error) {
 		reg = monitoring.Default.NewRegistry(logName+"."+strconv.Itoa(id), monitoring.DoNotReport)
 	)
 
-	p := &sizeLimit{
+	sort.Strings(config.Fields)
+
+	p := &sizeRateLimit{
 		config: config,
 		logger: log,
 		metrics: metrics{
@@ -94,13 +92,20 @@ func new(cfg *common.Config) (processors.Processor, error) {
 
 // Run applies the configured rate limit to the given event. If the event is within the
 // configured rate limit, it is returned as-is. If not, nil is returned.
-func (p *sizeLimit) Run(event *beat.Event) (*beat.Event, error) {
+func (p *sizeRateLimit) Run(event *beat.Event) (*beat.Event, error) {
+	messageLen, ok := event.Meta["message_len"]
+	if !ok {
+		return nil, fmt.Errorf("message_len meta not found in event")
+	}
 	key, err := p.makeKey(event)
 	if err != nil {
 		return nil, errors.Wrap(err, "could not make key")
 	}
-	p.clearOldKeys()
-	if p.checkLimit(key, event) {
+	if len(p.keys) > 10 {
+		p.clearOldKeys()
+	}
+
+	if p.checkLimit(key, messageLen.(uint64)) {
 		return event, nil
 	}
 
@@ -109,19 +114,18 @@ func (p *sizeLimit) Run(event *beat.Event) (*beat.Event, error) {
 	return nil, nil
 }
 
-func (p *sizeLimit) String() string {
+func (p *sizeRateLimit) String() string {
 	return fmt.Sprintf(
-		"%v=[limit=[%v],fields=[%v],algorithm=[%v]]",
-		processorName, p.config.Limit, p.config.Fields, p.config.Algorithm.Name(),
+		"%v=[limit=[%v],fields=[%v]]",
+		processorName, p.config.Limit, p.config.Fields,
 	)
 }
 
-func (p *sizeLimit) makeKey(event *beat.Event) (uint64, error) {
+func (p *sizeRateLimit) makeKey(event *beat.Event) (uint64, error) {
 	if len(p.config.Fields) == 0 {
 		return 0, nil
 	}
 
-	sort.Strings(p.config.Fields)
 	values := make([]string, len(p.config.Fields))
 	for _, field := range p.config.Fields {
 		value, err := event.GetValue(field)
@@ -139,22 +143,18 @@ func (p *sizeLimit) makeKey(event *beat.Event) (uint64, error) {
 	return hashstructure.Hash(values, nil)
 }
 
-func (p *sizeLimit) checkLimit(key uint64, event *beat.Event) bool {
+func (p *sizeRateLimit) checkLimit(key uint64, messageLen uint64) bool {
 	_, ok := p.keys[key]
 	if !ok {
 		p.keys[key] = bucket{0, time.Now()}
 	}
-	messageLen, ok := event.Meta["message_len"]
-	if !ok {
-		return true
-	}
 	secsSinceLast := p.clock.Now().Sub(p.keys[key].LastReplenish).Seconds()
-	p.keys[key] = bucket{p.keys[key].Bytes + messageLen.(uint64), p.keys[key].LastReplenish}
+	p.keys[key] = bucket{p.keys[key].Bytes + messageLen, p.clock.Now()}
 	currentRate := float64(p.keys[key].Bytes) / secsSinceLast
 	return currentRate > p.config.Limit.valuePerSecond()
 }
 
-func (p *sizeLimit) clearOldKeys() {
+func (p *sizeRateLimit) clearOldKeys() {
 	for key := range p.keys {
 		secsSinceLast := p.clock.Now().Sub(p.keys[key].LastReplenish).Seconds()
 		if secsSinceLast > 10 {
