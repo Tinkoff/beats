@@ -100,6 +100,8 @@ func (c Equals) Check(event ValuesMap) bool {
 		}
 
 		if !equalValue(value) {
+			logger := logp.L().Named(logName)
+			logger.Warnf("equal value fails for %T in equals condition.", value)
 			return false
 		}
 	}
