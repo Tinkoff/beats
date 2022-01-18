@@ -466,6 +466,9 @@ func (h *Harvester) onMessage(
 		}
 		fields["message"] = text
 	}
+	if meta == nil {
+		meta = common.MapStr{}
+	}
 	meta["message_len"] = message.Bytes
 	err := forwarder.Send(beat.Event{
 		Timestamp: timestamp,
