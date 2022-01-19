@@ -227,7 +227,6 @@ func (c *client) getEventMessage(data *publisher.Event) (*message, error) {
 			msg.key = key
 		}
 	}
-	c.log.Info(*msg)
 	return msg, nil
 }
 

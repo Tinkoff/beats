@@ -476,6 +476,8 @@ func (h *Harvester) onMessage(
 		Meta:      meta,
 		Private:   state,
 	})
+	h.logger.Info(fields, "Fields")
+	h.logger.Info(meta, "Meta")
 	return err == nil
 }
 
