@@ -322,6 +322,7 @@ func (h *Harvester) Run() error {
 		}
 
 		message, err := h.reader.Next()
+		h.log.logger.Info("Print message", message)
 		if err != nil {
 			switch err {
 			case ErrFileTruncate:
