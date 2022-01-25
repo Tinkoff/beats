@@ -75,7 +75,7 @@ func (c *client) PublishAll(events []beat.Event) {
 
 func (c *client) Publish(e beat.Event) {
 	c.mutex.Lock()
-	c.logger().Info("Eventa at publisher", e)
+
 	defer c.mutex.Unlock()
 
 	c.publish(e)
@@ -98,8 +98,9 @@ func (c *client) publish(e beat.Event) {
 
 	if c.processors != nil {
 		var err error
-
+		c.logger().Info("Event at publisher before processors", event)
 		event, err = c.processors.Run(event)
+		c.logger().Info("Event at publisher after processors", event)
 		publish = event != nil
 		if err != nil {
 			// TODO: introduce dead-letter queue?
