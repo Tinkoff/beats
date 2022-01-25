@@ -85,6 +85,7 @@ func new(cfg *common.Config) (processors.Processor, error) {
 			Dropped: monitoring.NewInt(reg, "dropped"),
 		},
 		clock: clockwork.NewRealClock(),
+		keys:  map[uint64]bucket{},
 	}
 
 	return p, nil
