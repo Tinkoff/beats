@@ -358,6 +358,7 @@ func (h *Harvester) Run() error {
 
 		// Update state of harvester as successfully sent
 		h.state = state
+		h.logger.Info("Event processed by harvester and sent")
 
 		// Update metics of harvester as event was sent
 		h.metrics.readOffset.Set(state.Offset)
