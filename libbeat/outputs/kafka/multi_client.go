@@ -129,13 +129,13 @@ func (k *MultiClient) Close() error {
 }
 
 func (k *MultiClient) Publish(ctx context.Context, batch publisher.Batch) error {
-	eventsByClientId := map[string][]beat.Event{}
+	eventsByClientId := map[string][]publisher.Event{}
 
 	// Separate events by kafka clientId
 	for _, event := range batch.Events() {
 		kafkaClientId, _ := k.clientIdSelector.Select(&event.Content)
 
-		eventsByClientId[kafkaClientId] = append(eventsByClientId[kafkaClientId], event.Content)
+		eventsByClientId[kafkaClientId] = append(eventsByClientId[kafkaClientId], event)
 	}
 
 	var (
@@ -144,10 +144,10 @@ func (k *MultiClient) Publish(ctx context.Context, batch publisher.Batch) error 
 		wg         sync.WaitGroup
 	)
 
-	retryBeatEvents := func(events []beat.Event) {
+	retryBeatEvents := func(events []publisher.Event) {
 		forRetryMu.Lock()
 		for _, event := range events {
-			forRetry = append(forRetry, publisher.Event{Content: event})
+			forRetry = append(forRetry, event)
 		}
 		forRetryMu.Unlock()
 	}
@@ -173,7 +173,8 @@ func (k *MultiClient) Publish(ctx context.Context, batch publisher.Batch) error 
 				return
 			}
 
-			monoBatch := outest.NewBatch(events...)
+			monoBatch := &outest.Batch{}
+			monoBatch.SetEvents(events)
 			monoBatch.OnSignal = func(sig outest.BatchSignal) {
 				defer wg.Done()
 
