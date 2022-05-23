@@ -358,7 +358,7 @@ func (h *Harvester) Run() error {
 
 		// Update state of harvester as successfully sent
 		h.state = state
-		h.logger.Info("Event processed by harvester and sent")
+		h.logger.Info("Event processed by harvester and sent to pipeline")
 
 		// Update metics of harvester as event was sent
 		h.metrics.readOffset.Set(state.Offset)
@@ -423,6 +423,12 @@ func (h *Harvester) onMessage(
 
 	text := string(message.Content)
 	if message.IsEmpty() || !h.shouldExportLine(text) {
+		if message.IsEmpty() {
+			h.logger.Info("Processed message was empty")
+		}
+		if !h.shouldExportLine(text) {
+			h.logger.Info("Processed message filtered out")
+		}
 		// No data or event is filtered out -> send empty event with state update
 		// only. The call can fail on filebeat shutdown.
 		// The event will be filtered out, but forwarded to the registry as is.
@@ -477,6 +483,9 @@ func (h *Harvester) onMessage(
 		Meta:      meta,
 		Private:   state,
 	})
+	if err != nil {
+		h.logger.Info("Failed to send processed message")
+	}
 	return err == nil
 }
 
