@@ -50,7 +50,7 @@ type client struct {
 	config     Config
 	mux        sync.Mutex
 	done       chan struct{}
-	inCoolDown bool
+	inCoolDown atomic.Value
 
 	producer sarama.AsyncProducer
 
@@ -80,16 +80,19 @@ func newKafkaClient(
 	writer codec.Codec,
 	cfg *Config,
 ) (*client, error) {
+	var cooldown atomic.Value
+	cooldown.Store(false)
 	c := &client{
-		log:      logp.NewLogger(logSelector),
-		observer: observer,
-		hosts:    hosts,
-		topic:    topic,
-		key:      key,
-		index:    strings.ToLower(index),
-		codec:    writer,
-		config:   *cfg,
-		done:     make(chan struct{}),
+		log:        logp.NewLogger(logSelector),
+		observer:   observer,
+		hosts:      hosts,
+		topic:      topic,
+		key:        key,
+		index:      strings.ToLower(index),
+		codec:      writer,
+		config:     *cfg,
+		done:       make(chan struct{}),
+		inCoolDown: cooldown,
 	}
 	return c, nil
 }
@@ -109,10 +112,9 @@ func (c *client) Connect() error {
 
 	c.producer = producer
 
-	c.wg.Add(3)
+	c.wg.Add(2)
 	go c.successWorker(producer.Successes())
 	go c.errorWorker(producer.Errors())
-	go c.warningWorker(producer.Warnings())
 
 	return nil
 }
@@ -135,9 +137,7 @@ func (c *client) Close() error {
 }
 
 func (c *client) InCoolDown() bool {
-	c.mux.Lock()
-	defer c.mux.Unlock()
-	return c.inCoolDown
+	return c.inCoolDown.Load().(bool)
 }
 
 func (c *client) Publish(_ context.Context, batch publisher.Batch) error {
@@ -239,6 +239,29 @@ func (c *client) getEventMessage(data *publisher.Event) (*message, error) {
 	return msg, nil
 }
 
+func (c *client) cooldown() {
+	if !c.inCoolDown.CompareAndSwap(false, true) {
+		return
+	}
+
+	c.log.Infof("Kafka (topic=%v): Cooldown for %v", c.topic, c.config.cooldown)
+	c.wg.Add(1)
+	go func() {
+		defer c.wg.Done()
+
+		for {
+			select {
+			case <-c.done:
+				return
+			case <-time.After(c.config.cooldown):
+				c.inCoolDown.Store(false)
+				c.log.Infof("Kafka (topic=%v): Stop cooldown", c.topic)
+				return
+			}
+		}
+	}()
+}
+
 func (c *client) successWorker(ch <-chan *sarama.ProducerMessage) {
 	defer c.wg.Done()
 	defer c.log.Debug("Stop kafka ack worker")
@@ -246,6 +269,14 @@ func (c *client) successWorker(ch <-chan *sarama.ProducerMessage) {
 	for libMsg := range ch {
 		msg := libMsg.Metadata.(*message)
 		msg.ref.done()
+		if !c.config.cooldownEnabled || c.InCoolDown() {
+			continue
+		}
+		if libMsg.ThrottleTime <= c.config.cooldownThreshold {
+			continue
+		}
+		c.log.Infof("Kafka (topic=%v): Throttled for %v", c.topic, libMsg.ThrottleTime)
+		c.cooldown()
 	}
 }
 
@@ -335,57 +366,6 @@ func (c *client) errorWorker(ch <-chan *sarama.ProducerError) {
 			} else {
 				breakerOpen = true
 			}
-		}
-	}
-}
-
-func (c *client) cooldown() {
-	c.mux.Lock()
-	if c.inCoolDown {
-		c.mux.Unlock()
-		return
-	}
-	c.inCoolDown = true
-	c.mux.Unlock()
-
-	c.log.Infof("Kafka (topic=%v): Cooldown for %v", c.topic, c.config.cooldown)
-	c.wg.Add(1)
-	go func() {
-		defer c.wg.Done()
-
-		for {
-			select {
-			case <-c.done:
-				return
-			case <-time.After(c.config.cooldown):
-				c.mux.Lock()
-				c.inCoolDown = false
-				c.mux.Unlock()
-				c.log.Infof("Kafka (topic=%v): Stop cooldown", c.topic)
-				return
-			}
-		}
-	}()
-}
-
-func (c *client) warningWorker(ch <-chan *sarama.ProducerError) {
-	defer c.wg.Done()
-	defer c.log.Debug("Stop kafka warning handler")
-
-	for errMsg := range ch {
-		switch err := errMsg.Err.(type) {
-		case sarama.ErrThrottled:
-			if c.InCoolDown() {
-				continue
-			}
-			if !c.config.cooldownEnabled {
-				continue
-			}
-			if err.ThrottleTime <= c.config.cooldownThreshold {
-				continue
-			}
-			c.log.Infof("Kafka (topic=%v): Throttled for %v", c.topic, err.ThrottleTime)
-			c.cooldown()
 		}
 	}
 }

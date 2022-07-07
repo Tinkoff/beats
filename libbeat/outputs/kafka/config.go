@@ -265,7 +265,6 @@ func newConfig(log *logp.Logger, config *kafkaConfig, goMetricsName string) (*Co
 
 	k.Producer.Return.Successes = true // enable return channel for signaling
 	k.Producer.Return.Errors = true
-	k.Producer.Return.Warnings = true
 
 	// have retries being handled by libbeat, disable retries in sarama library
 	retryMax := config.MaxRetries
