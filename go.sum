@@ -167,6 +167,8 @@ github.com/Shopify/toxiproxy/v2 v2.4.0 h1:O1e4Jfvr/hefNTNu+8VtdEG5lSeamJRo4aKhMO
 github.com/Shopify/toxiproxy/v2 v2.4.0/go.mod h1:3ilnjng821bkozDRxNoo64oI/DKqM+rOyJzb564+bvg=
 github.com/StackExchange/wmi v0.0.0-20170221213301-9f32b5905fd6 h1:2Gl9Tray0NEjP9KC0FjdGWlszbmTIsBP3JYzgyFdL4E=
 github.com/StackExchange/wmi v0.0.0-20170221213301-9f32b5905fd6/go.mod h1:3eOhrUMpNV+6aFIbp5/iudMxNCF27Vw2OZgy4xEx0Fg=
+github.com/Tinkoff/sarama v1.34.1-throttle h1:EAUyFAwKqdaqYQI+O6kb61y7afmm4Mu9XDl4k+LRXTE=
+github.com/Tinkoff/sarama v1.34.1-throttle/go.mod h1:NZSNswsnStpq8TUdFaqnpXm2Do6KRzTIjdBdVlL1YRM=
 github.com/VividCortex/gohistogram v1.0.0/go.mod h1:Pf5mBqqDxYaXu3hDrrU+w6nw50o/4+TcAqDqk/vUH7g=
 github.com/adriansr/fsnotify v1.4.8-0.20211018144411-a81f2b630e7c h1:LpOCwE9oTg0+1Dm8rB06dKxQs7yu5tdnM6A/Zm/juQQ=
 github.com/adriansr/fsnotify v1.4.8-0.20211018144411-a81f2b630e7c/go.mod h1:onXS6zmTa1LJcurVsOkzywEV/Q3pdEqqu362/8OQzAI=

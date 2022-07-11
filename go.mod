@@ -287,7 +287,7 @@ require (
 
 replace (
 	github.com/Microsoft/go-winio => github.com/bi-zone/go-winio v0.4.15
-	github.com/Shopify/sarama => gitlab.tcsbank.ru/a.v.olshanskiy/sarama
+	github.com/Shopify/sarama => github.com/Tinkoff/sarama v1.34.1-throttle
 	github.com/cucumber/godog => github.com/cucumber/godog v0.8.1
 	github.com/docker/go-plugins-helpers => github.com/elastic/go-plugins-helpers v0.0.0-20200207104224-bdf17607b79f
 	github.com/dop251/goja => github.com/andrewkroh/goja v0.0.0-20190128172624-dd2ac4456e20
