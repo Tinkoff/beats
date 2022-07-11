@@ -89,7 +89,7 @@ func makeKafka(
 	var client outputs.Client
 
 	if !shouldUseMultiKafka {
-		libCfg, err := newSaramaConfig(log, config, "")
+		libCfg, err := newConfig(log, config, "")
 		if err != nil {
 			return outputs.Fail(err)
 		}

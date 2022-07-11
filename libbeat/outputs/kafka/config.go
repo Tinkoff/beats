@@ -70,6 +70,9 @@ type kafkaConfig struct {
 	Codec              codec.Config              `config:"codec"`
 	Sasl               kafka.SaslConfig          `config:"sasl"`
 	EnableFAST         bool                      `config:"enable_krb5_fast"`
+	EnableCoolDown     bool                      `config:"enable_cooldown"`
+	CoolDownThreshold  time.Duration             `config:"cooldown_threshold"`
+	CoolDownDuration   time.Duration             `config:"cooldown_duration"`
 }
 
 type metaConfig struct {
@@ -129,10 +132,13 @@ func defaultConfig() kafkaConfig {
 			Init: 1 * time.Second,
 			Max:  60 * time.Second,
 		},
-		ClientID:       "beats",
-		ChanBufferSize: 256,
-		Username:       "",
-		Password:       "",
+		ClientID:          "beats",
+		ChanBufferSize:    256,
+		Username:          "",
+		Password:          "",
+		EnableCoolDown:    false,
+		CoolDownThreshold: 5 * time.Second,
+		CoolDownDuration:  5 * time.Minute,
 	}
 }
 
@@ -170,13 +176,22 @@ func (c *kafkaConfig) Validate() error {
 	return nil
 }
 
-func newSaramaConfig(log *logp.Logger, config *kafkaConfig, goMetricsName string) (*sarama.Config, error) {
+type Config struct {
+	sarama.Config
+
+	cooldownEnabled   bool
+	cooldownThreshold time.Duration
+	cooldown          time.Duration
+}
+
+func newConfig(log *logp.Logger, config *kafkaConfig, goMetricsName string) (*Config, error) {
 	partitioner, err := makePartitioner(log, config.Partition)
 	if err != nil {
 		return nil, err
 	}
 
-	k := sarama.NewConfig()
+	sk := sarama.NewConfig()
+	k := &Config{Config: *sk}
 
 	// configure network level properties
 	timeout := config.Timeout
@@ -225,7 +240,7 @@ func newSaramaConfig(log *logp.Logger, config *kafkaConfig, goMetricsName string
 		k.Net.SASL.Enable = true
 		k.Net.SASL.User = config.Username
 		k.Net.SASL.Password = config.Password
-		config.Sasl.ConfigureSarama(k)
+		config.Sasl.ConfigureSarama(sk)
 	}
 
 	// configure metadata update properties
@@ -289,6 +304,9 @@ func newSaramaConfig(log *logp.Logger, config *kafkaConfig, goMetricsName string
 		adapter.Rename("outgoing-byte-rate", "bytes_write"),
 		adapter.GoMetricsNilify,
 	)
+	k.cooldownEnabled = config.EnableCoolDown
+	k.cooldown = config.CoolDownDuration
+	k.cooldownThreshold = config.CoolDownThreshold
 
 	if err := k.Validate(); err != nil {
 		log.Errorf("Invalid kafka configuration: %+v", err)
