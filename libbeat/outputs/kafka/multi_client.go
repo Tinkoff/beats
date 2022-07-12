@@ -16,10 +16,15 @@ import (
 )
 
 type (
-	multiClientBuilder func(clientId string) (outputs.Client, error)
+	Client interface {
+		outputs.Client
+		InCoolDown() bool
+	}
+
+	multiClientBuilder func(clientId string) (Client, error)
 
 	clientInfo struct {
-		Client     outputs.Client
+		Client     Client
 		LastUsedAt time.Time
 	}
 
@@ -59,9 +64,9 @@ func NewKafkaMultiClient(
 		clients:          make(map[string]*clientInfo),
 	}
 
-	k.builder = func(clientId string) (outputs.Client, error) {
+	k.builder = func(clientId string) (Client, error) {
 		goMetricsName := "libbeat.outputs.multikafka." + clientId // we must use separate metricsNames to avoid data races
-		cfg, err := newSaramaConfig(log, config, goMetricsName)
+		cfg, err := newConfig(log, config, goMetricsName)
 		if err != nil {
 			return nil, err
 		}
@@ -191,6 +196,11 @@ func (k *MultiClient) Publish(ctx context.Context, batch publisher.Batch) error 
 					k.log.Warnf("unsupported signal tag %d", sig.Tag)
 				}
 			}
+			if client.InCoolDown() {
+				k.log.Debugf("client %s is in cooldown", clientId)
+				monoBatch.ACK()
+				return
+			}
 
 			err = client.Publish(ctx, monoBatch)
 			if err != nil {
@@ -214,7 +224,7 @@ func (k *MultiClient) String() string {
 	return "kafkaMultiClient"
 }
 
-func (k *MultiClient) getClient(kafkaClientId string) (outputs.Client, error) {
+func (k *MultiClient) getClient(kafkaClientId string) (Client, error) {
 	var (
 		ci *clientInfo
 		ok bool

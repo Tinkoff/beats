@@ -40,16 +40,17 @@ import (
 )
 
 type client struct {
-	log      *logp.Logger
-	observer outputs.Observer
-	hosts    []string
-	topic    outil.Selector
-	key      *fmtstr.EventFormatString
-	index    string
-	codec    codec.Codec
-	config   sarama.Config
-	mux      sync.Mutex
-	done     chan struct{}
+	log        *logp.Logger
+	observer   outputs.Observer
+	hosts      []string
+	topic      outil.Selector
+	key        *fmtstr.EventFormatString
+	index      string
+	codec      codec.Codec
+	config     Config
+	mux        sync.Mutex
+	done       chan struct{}
+	inCoolDown atomic.Value
 
 	producer sarama.AsyncProducer
 
@@ -77,18 +78,21 @@ func newKafkaClient(
 	key *fmtstr.EventFormatString,
 	topic outil.Selector,
 	writer codec.Codec,
-	cfg *sarama.Config,
+	cfg *Config,
 ) (*client, error) {
+	var cooldown atomic.Value
+	cooldown.Store(false)
 	c := &client{
-		log:      logp.NewLogger(logSelector),
-		observer: observer,
-		hosts:    hosts,
-		topic:    topic,
-		key:      key,
-		index:    strings.ToLower(index),
-		codec:    writer,
-		config:   *cfg,
-		done:     make(chan struct{}),
+		log:        logp.NewLogger(logSelector),
+		observer:   observer,
+		hosts:      hosts,
+		topic:      topic,
+		key:        key,
+		index:      strings.ToLower(index),
+		codec:      writer,
+		config:     *cfg,
+		done:       make(chan struct{}),
+		inCoolDown: cooldown,
 	}
 	return c, nil
 }
@@ -100,7 +104,7 @@ func (c *client) Connect() error {
 	c.log.Debugf("connect: %v", c.hosts)
 
 	// try to connect
-	producer, err := sarama.NewAsyncProducer(c.hosts, &c.config)
+	producer, err := sarama.NewAsyncProducer(c.hosts, &c.config.Config)
 	if err != nil {
 		c.log.Errorf("Kafka connect fails with: %+v", err)
 		return err
@@ -130,6 +134,10 @@ func (c *client) Close() error {
 	c.wg.Wait()
 	c.producer = nil
 	return nil
+}
+
+func (c *client) InCoolDown() bool {
+	return c.inCoolDown.Load().(bool)
 }
 
 func (c *client) Publish(_ context.Context, batch publisher.Batch) error {
@@ -231,6 +239,29 @@ func (c *client) getEventMessage(data *publisher.Event) (*message, error) {
 	return msg, nil
 }
 
+func (c *client) cooldown() {
+	if !c.inCoolDown.CompareAndSwap(false, true) {
+		return
+	}
+
+	c.log.Infof("Kafka (topic=%v): Cooldown for %v", c.topic, c.config.cooldown)
+	c.wg.Add(1)
+	go func() {
+		defer c.wg.Done()
+
+		for {
+			select {
+			case <-c.done:
+				return
+			case <-time.After(c.config.cooldown):
+				c.inCoolDown.Store(false)
+				c.log.Infof("Kafka (topic=%v): Stop cooldown", c.topic)
+				return
+			}
+		}
+	}()
+}
+
 func (c *client) successWorker(ch <-chan *sarama.ProducerMessage) {
 	defer c.wg.Done()
 	defer c.log.Debug("Stop kafka ack worker")
@@ -238,6 +269,14 @@ func (c *client) successWorker(ch <-chan *sarama.ProducerMessage) {
 	for libMsg := range ch {
 		msg := libMsg.Metadata.(*message)
 		msg.ref.done()
+		if !c.config.cooldownEnabled || c.InCoolDown() {
+			continue
+		}
+		if libMsg.ThrottleTime <= c.config.cooldownThreshold {
+			continue
+		}
+		c.log.Infof("Kafka (topic=%v): Throttled for %v", c.topic, libMsg.ThrottleTime)
+		c.cooldown()
 	}
 }
 
