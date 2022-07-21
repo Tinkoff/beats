@@ -19,6 +19,7 @@ type (
 	Client interface {
 		outputs.Client
 		InCoolDown() bool
+		Dropped(int)
 	}
 
 	multiClientBuilder func(clientId string) (Client, error)
@@ -199,6 +200,7 @@ func (k *MultiClient) Publish(ctx context.Context, batch publisher.Batch) error 
 			if client.InCoolDown() {
 				k.log.Debugf("client %s is in cooldown", clientId)
 				monoBatch.ACK()
+				client.Dropped(len(events))
 				return
 			}
 
