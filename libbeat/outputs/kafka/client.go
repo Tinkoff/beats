@@ -140,6 +140,10 @@ func (c *client) InCoolDown() bool {
 	return c.inCoolDown.Load().(bool)
 }
 
+func (c *client) Dropped(value int) {
+	c.config.dropped.Add(float64(value))
+}
+
 func (c *client) Publish(_ context.Context, batch publisher.Batch) error {
 	events := batch.Events()
 	c.observer.NewBatch(len(events))
@@ -245,6 +249,7 @@ func (c *client) cooldown() {
 	}
 
 	c.log.Infof("Kafka (topic=%v): Cooldown for %v", c.topic, c.config.cooldown)
+	c.config.throttled.Set(1)
 	c.wg.Add(1)
 	go func() {
 		defer c.wg.Done()
@@ -254,6 +259,7 @@ func (c *client) cooldown() {
 			case <-c.done:
 				return
 			case <-time.After(c.config.cooldown):
+				c.config.throttled.Set(0)
 				c.inCoolDown.Store(false)
 				c.log.Infof("Kafka (topic=%v): Stop cooldown", c.topic)
 				return

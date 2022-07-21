@@ -182,6 +182,9 @@ type Config struct {
 	cooldownEnabled   bool
 	cooldownThreshold time.Duration
 	cooldown          time.Duration
+
+	throttled        *monitoring.Float
+	dropped          *monitoring.Float
 }
 
 func newConfig(log *logp.Logger, config *kafkaConfig, goMetricsName string) (*Config, error) {
@@ -297,13 +300,23 @@ func newConfig(log *logp.Logger, config *kafkaConfig, goMetricsName string) (*Co
 	}
 
 	k.Producer.Partitioner = partitioner
+
 	k.MetricRegistry = adapter.GetGoMetrics(
 		monitoring.Default,
 		goMetricsName,
 		adapter.Rename("incoming-byte-rate", "bytes_read"),
 		adapter.Rename("outgoing-byte-rate", "bytes_write"),
+		adapter.ApplyIf(func(name string) bool {
+			return strings.HasPrefix(name, "throttle-time-in-ms-for-broker")
+		}, adapter.ModifyName(func(name string) string{
+			i := strings.LastIndex(name, "-")
+			return name[:i] + "." + name[i + 1:]
+		}), adapter.Accept),
 		adapter.GoMetricsNilify,
 	)
+	k.throttled = monitoring.NewFloat(monitoring.Default, goMetricsName + ".throttled")
+	k.dropped = monitoring.NewFloat(monitoring.Default, goMetricsName + ".dropped")
+
 	k.cooldownEnabled = config.EnableCoolDown
 	k.cooldown = config.CoolDownDuration
 	k.cooldownThreshold = config.CoolDownThreshold
