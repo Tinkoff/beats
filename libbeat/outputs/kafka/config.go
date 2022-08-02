@@ -183,6 +183,7 @@ type Config struct {
 	cooldownThreshold time.Duration
 	cooldown          time.Duration
 
+	goMetricsName    string
 	throttled        *monitoring.Float
 	dropped          *monitoring.Float
 }
@@ -298,12 +299,12 @@ func newConfig(log *logp.Logger, config *kafkaConfig, goMetricsName string) (*Co
 	if goMetricsName == "" {
 		goMetricsName = "libbeat.outputs.kafka"
 	}
-
+	k.goMetricsName = goMetricsName
 	k.Producer.Partitioner = partitioner
 
 	k.MetricRegistry = adapter.GetGoMetrics(
 		monitoring.Default,
-		goMetricsName,
+		k.goMetricsName,
 		adapter.Rename("incoming-byte-rate", "bytes_read"),
 		adapter.Rename("outgoing-byte-rate", "bytes_write"),
 		adapter.ApplyIf(func(name string) bool {
@@ -314,8 +315,9 @@ func newConfig(log *logp.Logger, config *kafkaConfig, goMetricsName string) (*Co
 		}), adapter.Accept),
 		adapter.GoMetricsNilify,
 	)
-	k.throttled = monitoring.NewFloat(monitoring.Default, goMetricsName + ".throttled")
-	k.dropped = monitoring.NewFloat(monitoring.Default, goMetricsName + ".dropped")
+
+	k.throttled = monitoring.NewFloat(monitoring.Default, k.goMetricsName + ".throttled")
+	k.dropped = monitoring.NewFloat(monitoring.Default, k.goMetricsName + ".dropped")
 
 	k.cooldownEnabled = config.EnableCoolDown
 	k.cooldown = config.CoolDownDuration
@@ -326,6 +328,11 @@ func newConfig(log *logp.Logger, config *kafkaConfig, goMetricsName string) (*Co
 		return nil, err
 	}
 	return k, nil
+}
+
+func (c *Config) clearMetrics() {
+	monitoring.Default.Remove(c.goMetricsName + ".throttled")
+	monitoring.Default.Remove(c.goMetricsName + ".dropped")
 }
 
 // makeBackoffFunc returns a stateless implementation of exponential-backoff-with-jitter. It is conceptually
