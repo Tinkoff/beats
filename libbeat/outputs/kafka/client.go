@@ -124,6 +124,7 @@ func (c *client) Close() error {
 	defer c.mux.Unlock()
 	c.log.Debug("closed kafka client")
 
+	c.config.clearMetrics()
 	// producer was not created before the close() was called.
 	if c.producer == nil {
 		return nil
@@ -133,6 +134,7 @@ func (c *client) Close() error {
 	c.producer.AsyncClose()
 	c.wg.Wait()
 	c.producer = nil
+
 	return nil
 }
 
