@@ -322,7 +322,7 @@ func partTestHashInvariant(N int) partTestScenario {
 	}
 }
 
-var hash2PartitionTests = []struct {
+var fnv32aHash2PartitionTests = []struct {
 	testName       string
 	hash           uint32
 	numPartitions  int32
@@ -359,12 +359,61 @@ var hash2PartitionTests = []struct {
 		1,
 	},
 }
+var crc32Hash2PartitionTests = []struct {
+	testName       string
+	hash           uint32
+	numPartitions  int32
+	expectedResult int32
+}{
+	{
+		"hash of max int32, partitions 12",
+		uint32(0x7FFFFFFF),
+		12,
+		7,
+	},
+	{
+		"hash of min int32, partitions 12",
+		uint32(0x80000000),
+		12,
+		8,
+	},
+	{
+		"hash of max uint32, partitions 12",
+		uint32(0xFFFFFFFF),
+		12,
+		3,
+	},
+	{
+		"hash of min uint32, partitions 12",
+		uint32(0x00000000),
+		12,
+		0,
+	},
+	{
+		"hash of min uint32 + 1, partitions 12",
+		uint32(0x00000001),
+		12,
+		1,
+	},
+}
 
 func TestHash2Partition(t *testing.T) {
-	for _, tt := range hash2PartitionTests {
-		t.Run(tt.testName, func(t *testing.T) {
-			var partition, _ = hash2Partition(tt.hash, tt.numPartitions)
-			assert.Equal(t, tt.expectedResult, partition)
-		})
-	}
+	t.Run("fnv32a partitioner", func(t *testing.T) {
+		for _, tt := range fnv32aHash2PartitionTests {
+			t.Run(tt.testName, func(t *testing.T) {
+				hash2Partition := makeHash2Partition(HashTypeFnv32A)
+				var partition, _ = hash2Partition(tt.hash, tt.numPartitions)
+				assert.Equal(t, tt.expectedResult, partition)
+			})
+		}
+	})
+	t.Run("crc32 partitioner", func(t *testing.T) {
+		for _, tt := range crc32Hash2PartitionTests {
+			t.Run(tt.testName, func(t *testing.T) {
+				hash2Partition := makeHash2Partition(HashTypeCrc32)
+				var partition, _ = hash2Partition(tt.hash, tt.numPartitions)
+				assert.Equal(t, tt.expectedResult, partition)
+			})
+		}
+	})
 }

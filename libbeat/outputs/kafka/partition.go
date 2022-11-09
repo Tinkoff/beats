@@ -22,6 +22,7 @@ import (
 	"errors"
 	"fmt"
 	"hash"
+	"hash/crc32"
 	"hash/fnv"
 	"math/rand"
 	"strconv"
@@ -73,7 +74,9 @@ func initPartitionStrategy(
 ) (func() partitioner, bool, error) {
 	if len(partition) == 0 {
 		// default use `hash` partitioner + all partitions (block if unreachable)
-		return makeHashPartitioner, false, nil
+		return func() partitioner {
+			return makeHashPartitioner(makeHasher(HashTypeFnv32A), makeHash2Partition(HashTypeFnv32A))
+		}, false, nil
 	}
 
 	if len(partition) > 1 {
@@ -193,11 +196,41 @@ func cfgRoundRobinPartitioner(_ *logp.Logger, config *common.Config) (func() par
 	}, nil
 }
 
+const (
+	HashTypeFnv32A = "fnv32a"
+	HashTypeCrc32  = "crc32"
+)
+
+func makeHasher(typ string) hash.Hash32 {
+	if typ == HashTypeCrc32 {
+		return crc32.NewIEEE()
+	}
+
+	return fnv.New32a()
+}
+
+type hash2PartitionFunc func(hash uint32, numPartitions int32) (int32, error)
+
+func makeHash2Partition(typ string) hash2PartitionFunc {
+	if typ == HashTypeCrc32 {
+		return func(hash uint32, numPartitions int32) (int32, error) {
+			return int32(hash % uint32(numPartitions)), nil
+		}
+	}
+
+	return func(hash uint32, numPartitions int32) (int32, error) {
+		p := int32(hash) & 0x7FFFFFFF
+		return p % numPartitions, nil
+	}
+}
+
 func cfgHashPartitioner(log *logp.Logger, config *common.Config) (func() partitioner, error) {
 	cfg := struct {
 		Hash   []string `config:"hash"`
 		Random bool     `config:"random"`
+		Type   string   `config:"type"`
 	}{
+		Type:   HashTypeFnv32A,
 		Random: true,
 	}
 	if err := config.Unpack(&cfg); err != nil {
@@ -205,17 +238,18 @@ func cfgHashPartitioner(log *logp.Logger, config *common.Config) (func() partiti
 	}
 
 	if len(cfg.Hash) == 0 {
-		return makeHashPartitioner, nil
+		return func() partitioner {
+			return makeHashPartitioner(makeHasher(cfg.Type), makeHash2Partition(cfg.Type))
+		}, nil
 	}
 
 	return func() partitioner {
-		return makeFieldsHashPartitioner(log, cfg.Hash, !cfg.Random)
+		return makeFieldsHashPartitioner(log, cfg.Hash, !cfg.Random, makeHasher(cfg.Type), makeHash2Partition(cfg.Type))
 	}, nil
 }
 
-func makeHashPartitioner() partitioner {
+func makeHashPartitioner(hasher hash.Hash32, hash2Partition hash2PartitionFunc) partitioner {
 	generator := rand.New(rand.NewSource(rand.Int63()))
-	hasher := fnv.New32a()
 
 	return func(msg *message, numPartitions int32) (int32, error) {
 		if msg.key == nil {
@@ -237,9 +271,8 @@ func makeHashPartitioner() partitioner {
 	}
 }
 
-func makeFieldsHashPartitioner(log *logp.Logger, fields []string, dropFail bool) partitioner {
+func makeFieldsHashPartitioner(log *logp.Logger, fields []string, dropFail bool, hasher hash.Hash32, hash2Partition hash2PartitionFunc) partitioner {
 	generator := rand.New(rand.NewSource(rand.Int63()))
-	hasher := fnv.New32a()
 
 	return func(msg *message, numPartitions int32) (int32, error) {
 		hash := msg.hash
@@ -269,11 +302,6 @@ func makeFieldsHashPartitioner(log *logp.Logger, fields []string, dropFail bool)
 
 		return hash2Partition(hash, numPartitions)
 	}
-}
-
-func hash2Partition(hash uint32, numPartitions int32) (int32, error) {
-	p := int32(hash) & 0x7FFFFFFF
-	return p % numPartitions, nil
 }
 
 func hashFieldValue(h hash.Hash32, event common.MapStr, field string) error {
