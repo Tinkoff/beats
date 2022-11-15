@@ -49,6 +49,7 @@ type kafkaInputConfig struct {
 	Fetch                    kafkaFetch        `config:"fetch"`
 	Rebalance                kafkaRebalance    `config:"rebalance"`
 	TLS                      *tlscommon.Config `config:"ssl"`
+	Sasl                     kafka.SaslConfig  `config:"sasl"`
 	Kerberos                 *kerberos.Config  `config:"kerberos"`
 	Username                 string            `config:"username"`
 	Password                 string            `config:"password"`
@@ -202,6 +203,7 @@ func newSaramaConfig(config kafkaInputConfig) (*sarama.Config, error) {
 		k.Net.SASL.Enable = true
 		k.Net.SASL.User = config.Username
 		k.Net.SASL.Password = config.Password
+		config.Sasl.ConfigureSarama(k)
 	}
 
 	// configure client ID
