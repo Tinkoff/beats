@@ -183,9 +183,9 @@ type Config struct {
 	cooldownThreshold time.Duration
 	cooldown          time.Duration
 
-	goMetricsName    string
-	throttled        *monitoring.Float
-	dropped          *monitoring.Float
+	goMetricsName string
+	throttled     *monitoring.Float
+	dropped       *monitoring.Float
 }
 
 func newConfig(log *logp.Logger, config *kafkaConfig, goMetricsName string) (*Config, error) {
@@ -244,7 +244,7 @@ func newConfig(log *logp.Logger, config *kafkaConfig, goMetricsName string) (*Co
 		k.Net.SASL.Enable = true
 		k.Net.SASL.User = config.Username
 		k.Net.SASL.Password = config.Password
-		config.Sasl.ConfigureSarama(sk)
+		config.Sasl.ConfigureSarama(&k.Config)
 	}
 
 	// configure metadata update properties
@@ -309,15 +309,15 @@ func newConfig(log *logp.Logger, config *kafkaConfig, goMetricsName string) (*Co
 		adapter.Rename("outgoing-byte-rate", "bytes_write"),
 		adapter.ApplyIf(func(name string) bool {
 			return strings.HasPrefix(name, "throttle-time-in-ms-for-broker")
-		}, adapter.ModifyName(func(name string) string{
+		}, adapter.ModifyName(func(name string) string {
 			i := strings.LastIndex(name, "-")
-			return name[:i] + "." + name[i + 1:]
+			return name[:i] + "." + name[i+1:]
 		}), adapter.Accept),
 		adapter.GoMetricsNilify,
 	)
 
-	k.throttled = monitoring.NewFloat(monitoring.Default, k.goMetricsName + ".throttled")
-	k.dropped = monitoring.NewFloat(monitoring.Default, k.goMetricsName + ".dropped")
+	k.throttled = monitoring.NewFloat(monitoring.Default, k.goMetricsName+".throttled")
+	k.dropped = monitoring.NewFloat(monitoring.Default, k.goMetricsName+".dropped")
 
 	k.cooldownEnabled = config.EnableCoolDown
 	k.cooldown = config.CoolDownDuration
